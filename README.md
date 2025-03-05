@@ -10,6 +10,8 @@ Pather is a tool for annotating SVG maps of buildings by:
 
 This tool is built primarily for a university project related to an indoor navigation application.
 
+This tool was rapidly prototyped alongside GitHub copilot in VS Code. Most PyGame visualization functions were developed primarily with this tool while most functionality was developed with minimal input.
+
 ## Features
 
 - **Interactive Visualization**: Pan, zoom, and select spaces in your SVG floor plans
