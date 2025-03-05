@@ -29,6 +29,7 @@ This tool was rapidly prototyped alongside GitHub copilot in VS Code. Most PyGam
   - numpy
   - shapely
   - pygeoops
+  - tkinter
 
 ## Installation
 
@@ -36,7 +37,7 @@ This tool was rapidly prototyped alongside GitHub copilot in VS Code. Most PyGam
 2. Install the required dependencies:
 
 ```bash
-pip install pygame numpy shapely pygeoops
+pip install pygame numpy shapely pygeoops tkinter
 ```
 
 ## Usage
@@ -66,6 +67,11 @@ python main.py
   - `l`: Load selected spaces
   - `e`: Export SVG
   - `r`: Export SVG with debug information
+  - `v`: Activate "Elevator Mode"
+  - `c`: Activate "Stairs Mode"
+  - `up arrow`: Increase ID
+  - `down arrow`: Decrease ID
+  - `delete`: Delete selected Elevator or Stairs
 
 ## SVG Format Requirements
 
@@ -96,6 +102,7 @@ The input SVG should have the following structure:
 - `svg_parser.py`: SVG parsing and export functions
 - `display.py`: Interactive display and UI logic
 - `geometry_utils.py`: Geometric calculations and transformations
+- `classes.py`: Holds data for classes like elevator
 
 ## License
 

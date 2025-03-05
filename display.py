@@ -1,25 +1,328 @@
 import pygame
+import os
+import json
 from shapely import Polygon
 from geometry_utils import transform_shapes, inverse_transform_point, zoom_at, is_point_near_line
 from geometry_utils import find_innermost_polygon, is_point_inside_polygon, shapely_to_pygame
-from geometry_utils import find_midline_path, nearest_point_on_line
+from geometry_utils import find_midline_path, nearest_point_on_line, transform_point
 from svg_parser import parse_svg, export_svg
+from classes import Elevator, Stairs
 from values import *
 import xml.etree.ElementTree as ET
-import json
-import os
 from shapely.geometry import LineString, MultiLineString
 from shapely.ops import linemerge
 
+# Initialize pygame only once
+def init_pygame():
+    pygame.init()
+
+class MapWindow:
+    def __init__(self, file_path, map_name, width, height, entrances, spaces, walls, paths, elevators, stairs, on_close):
+        self.file_path = file_path
+        self.map_name = map_name
+        self.width = width
+        self.height = height
+        self.entrances = entrances
+        self.spaces = spaces
+        self.walls = walls
+        self.paths = paths
+        self.elevators = elevators or []  # List of Elevator objects
+        self.stairs = stairs or []  # List of Elevator objects
+        self.on_close = on_close
+        
+        # Create a new pygame window
+        self.window_id = pygame.display.set_mode((width, height), pygame.RESIZABLE | pygame.HWSURFACE)
+        pygame.display.set_caption(f"Pather - {map_name}")
+        
+        # Initial colors and selection state
+        self.entrance_colors = [ENTRANCE_COLOR] * len(entrances)
+        self.space_colors = [SPACE_COLOR] * len(spaces)
+        self.wall_colors = [WALL_COLOR] * len(walls)
+        self.path_colors = [SPACE_COLOR] * len(paths)
+        self.selected_entrances = [False] * len(entrances)
+        self.selected_spaces = [False] * len(spaces)
+        self.selected_walls = [False] * len(walls)
+        self.selected_paths = [False] * len(paths)
+        self.midline_paths = []
+        self.midline_colors = []
+        
+        # View control variables
+        self.scale = 1.0
+        self.offset = [0, 0]
+        self.dragging = False
+        self.drag_start = (0, 0)
+        
+        # Elevator mode
+        self.elevator_mode = False
+        self.current_elevator_id = 1
+
+        # Stairs mode
+        self.stairs_mode = False
+        self.current_stairs_id = 1
+        
+        # Load saved spaces if they exist
+        self.load_selected_spaces()
+        
+        # Start the rendering loop
+        self.running = True
+        self.run()
+    
+    def run(self):
+        """Main loop for the map window"""
+        clock = pygame.time.Clock()
+        while self.running:
+            self.handle_events()
+            self.draw()
+            pygame.display.flip()
+            clock.tick(60)
+        
+        # Notify the main application when this window closes
+        self.on_close(self)
+    
+    def handle_events(self):
+        """Handle pygame events for this window"""
+        mouse_pos = pygame.mouse.get_pos()
+        transformed_mouse_pos = inverse_transform_point(mouse_pos, self.scale, self.offset)
+        
+        # Handle hover effect if not in elevator mode
+        if not self.elevator_mode or self.stairs_mode:
+            handle_hover_and_click(transformed_mouse_pos, self.spaces, True, 
+                                  self.space_colors, self.selected_spaces, SPACE_COLOR)
+        
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                self.close()
+            
+            elif event.type == pygame.MOUSEBUTTONDOWN:
+                if event.button == 4:  # Scroll up
+                    self.scale, self.offset = zoom_at(self.scale, self.offset, mouse_pos, 1.1)
+                elif event.button == 5:  # Scroll down
+                    self.scale, self.offset = zoom_at(self.scale, self.offset, mouse_pos, 1.0 / 1.1)
+                elif event.button == 2:  # Middle click
+                    self.dragging = True
+                    self.drag_start = event.pos
+                elif event.button == 1:  # Left click
+                    if self.elevator_mode:
+                        # Check if clicking on existing elevator
+                        clicked_elevator = False
+                        for elevator in self.elevators:
+                            if elevator.is_clicked(mouse_pos, self.scale, self.offset):
+                                elevator.selected = not elevator.selected
+                                clicked_elevator = True
+                                break
+                        
+                        # If not clicking on existing elevator, create new one
+                        if not clicked_elevator:
+                            new_elevator = Elevator(transformed_mouse_pos, self.current_elevator_id)
+                            self.elevators.append(new_elevator)
+                            self.current_elevator_id += 1
+                    elif self.stairs_mode:
+                        # Check if clicking on existing stairs
+                        clicked_stairs = False
+                        for stairs in self.stairs:
+                            if stairs.is_clicked(mouse_pos, self.scale, self.offset):
+                                stairs.selected = not stairs.selected
+                                clicked_stairs = True
+                                break
+                        
+                        # If not clicking on existing stairs, create new one
+                        if not clicked_stairs:
+                            new_stairs = Stairs(transformed_mouse_pos, self.current_stairs_id)
+                            self.stairs.append(new_stairs)
+                            self.current_stairs_id += 1
+                    
+                    else:
+                        # Normal space selection
+                        handle_click(transformed_mouse_pos, self.spaces, True, 
+                                    self.selected_spaces, self.space_colors, SPACE_COLOR)
+            
+            elif event.type == pygame.MOUSEBUTTONUP:
+                if event.button == 2:  # Middle click
+                    self.dragging = False
+            
+            elif event.type == pygame.MOUSEMOTION:
+                if self.dragging:
+                    dx, dy = event.rel
+                    self.offset[0] += dx
+                    self.offset[1] += dy
+            
+            elif event.type == pygame.KEYDOWN:
+                if event.key == KEY_MIDLINE:  # Calculate midline paths for selected spaces
+                    self.midline_paths = handle_midline_path(
+                        self.selected_spaces, self.spaces, self.entrances, self.walls)
+                    self.midline_colors = [MIDLINE_COLOR] * len(self.midline_paths)
+                    print(f"Midline paths: {len(self.midline_paths)}")
+                
+                elif event.key == KEY_ALL_MIDLINES:  # Calculate all midline paths
+                    color_array, self.midline_paths = handle_all_midlines(self.spaces, self.entrances)
+                    self.midline_colors = color_array
+                    print(f"All midline paths: {len(self.midline_paths)}")
+                
+                elif event.key == KEY_EXPORT:  # Export SVG
+                    output_path = f"./output/{self.map_name}_output.svg"
+                    export_svg(output_path, self.entrances, self.spaces, self.walls, 
+                              self.midline_paths, elevators=self.elevators, stairs=self.stairs)
+                    print(f"SVG exported as '{output_path}'")
+                
+                elif event.key == KEY_EXPORT_DEBUG:  # Export SVG with debug info
+                    output_path = f"./output/{self.map_name}_debug.svg"
+                    export_svg(output_path, self.entrances, self.spaces, self.walls, 
+                              self.midline_paths, debug=True, midline_colors=self.midline_colors,
+                              elevators=self.elevators)
+                    print(f"SVG exported as '{output_path}' with debug info")
+                
+                elif event.key == KEY_SAVE:  # Save selected spaces
+                    self.save_selected_spaces()
+                
+                elif event.key == KEY_LOAD:  # Load selected spaces
+                    self.load_selected_spaces()
+                
+                elif event.key == KEY_ELEVATOR_MODE:  # Toggle elevator mode
+                    if not self.stairs_mode:
+                        self.elevator_mode = not self.elevator_mode
+                    else:
+                        self.stairs_mode = False
+                        self.elevator_mode = True
+                    print(f"Elevator mode {'enabled' if self.elevator_mode else 'disabled'}")
+                
+                elif event.key == KEY_STAIRS_MODE:  # Toggle stairs mode
+                    if not self.elevator_mode:
+                        self.stairs_mode = not self.stairs_mode
+                    else:
+                        self.elevator_mode = False
+                        self.stairs_mode = True
+                    print(f"Stairs mode {'enabled' if self.stairs_mode else 'disabled'}")
+                
+                elif event.key == KEY_ID_UP:  # Increment elevator ID
+                    if self.elevator_mode:
+                        self.current_elevator_id = min(self.current_elevator_id + 1, MAX_ELEVATOR_ID)
+                        print(f"Current elevator ID: {self.current_elevator_id}")
+                    elif self.stairs_mode:
+                        self.current_stairs_id = min(self.current_stairs_id + 1, MAX_STAIRS_ID)
+                        print(f"Current stairs ID: {self.current_stairs_id}")
+                
+                elif event.key == KEY_ID_DOWN:  # Decrement elevator ID
+                    if self.elevator_mode:
+                        self.current_elevator_id = max(self.current_elevator_id - 1, 1)
+                        print(f"Current elevator ID: {self.current_elevator_id}")
+                    elif self.stairs_mode:
+                        self.current_stairs_id = max(self.current_stairs_id - 1, 1)
+                        print(f"Current stairs ID: {self.current_stairs_id}")
+
+                elif event.key == KEY_DELETE:  # Delete selected item
+                    if self.elevator_mode:
+                        self.elevators = [e for e in self.elevators if not e.selected]
+                        print("Deleted selected elevators")
+                    elif self.stairs_mode:
+                        self.stairs = [s for s in self.stairs if not s.selected]
+                        print("Deleted selected stairs")
+                
+                elif event.key == pygame.K_ESCAPE:  # Close window with ESC key
+                    self.close()
+            
+            elif event.type == pygame.VIDEORESIZE:
+                self.width, self.height = event.size
+                self.window_id = pygame.display.set_mode((self.width, self.height), pygame.RESIZABLE | pygame.HWSURFACE)
+    
+    def close(self):
+        """Properly close the window and notify the main application"""
+        print(f"Closing window: {self.map_name}")
+        self.running = False
+        # We don't call pygame.quit() here since there might be other windows open
+    
+    def draw(self):
+        """Draw all elements to the screen"""
+        self.window_id.fill((255, 255, 255))  # White background
+        
+        # Transform shapes
+        transformed_spaces = transform_shapes(self.spaces, self.scale, self.offset)
+        transformed_walls = transform_shapes(self.walls, self.scale, self.offset)
+        transformed_entrances = transform_shapes(self.entrances, self.scale, self.offset)
+        transformed_midline_paths = transform_shapes(self.midline_paths, self.scale, self.offset)
+        
+        # Draw shapes
+        draw_shapes(self.window_id, transformed_spaces, True, self.space_colors)
+        draw_shapes(self.window_id, transformed_walls, False, self.wall_colors)
+        draw_shapes(self.window_id, transformed_entrances, False, self.entrance_colors)
+        draw_shapes(self.window_id, transformed_midline_paths, False, self.midline_colors)
+        
+        # Draw elevators
+        for elevator in self.elevators:
+            elevator.draw(self.window_id, self.scale, self.offset)
+
+        # Draw stairs
+        for stairs in self.stairs:
+            stairs.draw(self.window_id, self.scale, self.offset)
+        
+        # Draw elevator mode indicator
+        if self.elevator_mode:
+            font = pygame.font.SysFont('Arial', 20)
+            text = font.render(f"Elevator Mode (ID: {self.current_elevator_id})", True, ELEVATOR_COLOR)
+            self.window_id.blit(text, (10, 10))
+        elif self.stairs_mode:
+            font = pygame.font.SysFont('Arial', 20)
+            text = font.render(f"Stairs Mode (ID: {self.current_stairs_id})", True, STAIRS_COLOR)
+            self.window_id.blit(text, (10, 10))
+        
+        # Draw close button
+        close_btn_rect = pygame.Rect(self.width - 30, 10, 20, 20)
+        pygame.draw.rect(self.window_id, (255, 0, 0), close_btn_rect)  # Red close button
+        pygame.draw.line(self.window_id, (255, 255, 255), (self.width - 25, 15), (self.width - 15, 25), 2)
+        pygame.draw.line(self.window_id, (255, 255, 255), (self.width - 15, 15), (self.width - 25, 25), 2)
+        
+        # Check if mouse is over the close button
+        mouse_pos = pygame.mouse.get_pos()
+        if close_btn_rect.collidepoint(mouse_pos):
+            for event in pygame.event.get(pygame.MOUSEBUTTONDOWN):
+                if event.button == 1:  # Left click
+                    self.close()
+    
+    def save_selected_spaces(self):
+        """Save selected spaces and elevators to a JSON file"""
+        file_path = f"./output/{self.map_name}_spaces.json"
+        with open(file_path, 'w') as file:
+            json.dump({
+                "selected_spaces": self.selected_spaces,
+                "elevators": [{"position": e.position, "id": e.id, "selected": e.selected} 
+                             for e in self.elevators]
+            }, file)
+        print(f"Selected spaces and elevators saved to {file_path}")
+    
+    def load_selected_spaces(self):
+        """Load selected spaces and elevators from a JSON file"""
+        file_path = f"./output/{self.map_name}_spaces.json"
+        try:
+            with open(file_path, 'r') as file:
+                data = json.load(file)
+                
+                # Load selected spaces
+                loaded_selected_spaces = data.get("selected_spaces", [])
+                if loaded_selected_spaces:
+                    for i, selected in enumerate(loaded_selected_spaces):
+                        if i < len(self.selected_spaces):
+                            self.selected_spaces[i] = selected
+                            self.space_colors[i] = CLICKED_COLOR if selected else SPACE_COLOR
+                
+                # Load elevators
+                loaded_elevators = data.get("elevators", [])
+                if loaded_elevators:
+                    self.elevators = []
+                    for e_data in loaded_elevators:
+                        elevator = Elevator(
+                            position=tuple(e_data["position"]), 
+                            elevator_id=e_data.get("id", 1)
+                        )
+                        elevator.selected = e_data.get("selected", False)
+                        self.elevators.append(elevator)
+                
+                print(f"Selected spaces and elevators loaded from {file_path}")
+        except FileNotFoundError:
+            print(f"No saved file found at {file_path}")
+
+# Existing functions from display.py with minor modifications
 def draw_shapes(screen, shapes, is_polygon, colors):
     """
     Draws polygons and polylines on the screen.
-    
-    Parameters:
-        screen: Pygame display surface
-        shapes: List of shapes to draw
-        is_polygon: Boolean indicating if shapes are polygons (True) or polylines (False)
-        colors: List of RGB color tuples for each shape
     """
     for i, shape in enumerate(shapes):
         if is_polygon:
@@ -30,14 +333,6 @@ def draw_shapes(screen, shapes, is_polygon, colors):
 def handle_hover_and_click(mouse_pos, shapes, is_polygon, shape_colors, selected, base_color):
     """
     Handles highlighting shapes when the mouse hovers over them.
-    
-    Parameters:
-        mouse_pos: Current mouse position (x, y)
-        shapes: List of shapes to check for hovering
-        is_polygon: Boolean indicating if shapes are polygons (True) or polylines (False)
-        shape_colors: List of RGB color tuples for each shape
-        selected: List of boolean values indicating if a shape is selected
-        base_color: Default color to reset shapes to when not hovered
     """
     if is_polygon:
         innermost_shape = find_innermost_polygon(mouse_pos, shapes)
@@ -58,14 +353,6 @@ def handle_hover_and_click(mouse_pos, shapes, is_polygon, shape_colors, selected
 def handle_click(mouse_pos, shapes, is_polygon, selected, shape_colors, base_color):
     """
     Handles selecting/deselecting shapes when clicked.
-    
-    Parameters:
-        mouse_pos: Current mouse position (x, y)
-        shapes: List of shapes to check for clicking
-        is_polygon: Boolean indicating if shapes are polygons (True) or polylines (False)
-        selected: List of boolean values indicating if a shape is selected
-        shape_colors: List of RGB color tuples for each shape
-        base_color: Default color to reset shapes to when not selected
     """
     if is_polygon:
         innermost_shape = find_innermost_polygon(mouse_pos, shapes)
@@ -83,15 +370,6 @@ def handle_click(mouse_pos, shapes, is_polygon, selected, shape_colors, base_col
 def handle_midline_path(selected_spaces, spaces, entrances, walls):
     """
     Calculates midline paths for selected spaces and connects entrances to these paths.
-    
-    Parameters:
-        selected_spaces: List of boolean values indicating if a space is selected
-        spaces: List of space polygons
-        entrances: List of entrance polylines
-        walls: List of wall polylines
-        
-    Returns:
-        List of midline paths
     """
     midline_paths = []
     for i, selected in enumerate(selected_spaces):
@@ -118,15 +396,6 @@ def handle_midline_path(selected_spaces, spaces, entrances, walls):
 def handle_all_midlines(spaces, entrances):
     """
     Calculates midline paths for all spaces and connects them.
-    
-    Parameters:
-        spaces: List of space polygons
-        entrances: List of entrance polylines
-        
-    Returns:
-        Tuple containing (color_array, midline_paths) where:
-            - color_array: List of RGB color tuples for the midline paths
-            - midline_paths: List of midline paths
     """
     midline_paths = handle_midline_path([True] * len(spaces), spaces, entrances, [])
     paths = midline_paths.copy()
@@ -155,153 +424,3 @@ def handle_all_midlines(spaces, entrances):
         color_array.append((0, 255, 0) if any(point in largest_midline_set for point in midline) else (255, 0, 0))
 
     return color_array, midline_paths
-
-def save_selected_spaces(file_path, selected_spaces):
-    """
-    Saves the selected spaces to a JSON file.
-    
-    Parameters:
-        file_path: Path to save the file
-        selected_spaces: List of boolean values indicating if a space is selected
-    """
-    with open(file_path, 'w') as file:
-        json.dump(selected_spaces, file)
-    print(f"Selected spaces saved to {file_path}")
-
-def load_selected_spaces(file_path, selected_spaces, space_colors, base_color):
-    """
-    Loads the selected spaces from a JSON file.
-    
-    Parameters:
-        file_path: Path to load the file from
-        selected_spaces: List to update with loaded selected spaces
-        space_colors: List of RGB color tuples for each space
-        base_color: Default color for unselected spaces
-        
-    Returns:
-        List of boolean values indicating if a space is selected, or None if the file was not found
-    """
-    try:
-        with open(file_path, 'r') as file:
-            loaded_selected_spaces = json.load(file)
-        print(f"Selected spaces loaded from {file_path}")
-        
-        for i, selected in enumerate(loaded_selected_spaces):
-            selected_spaces[i] = selected
-            space_colors[i] = CLICKED_COLOR if selected else base_color
-        
-        return loaded_selected_spaces
-    except FileNotFoundError:
-        print(f"No saved file found at {file_path}")
-        return None
-
-def display_shapes(width, height, entrances, spaces, walls, paths, load=True):
-    """
-    Main interactive display function for visualizing and manipulating shapes.
-    
-    Parameters:
-        width: Width of the display window
-        height: Height of the display window
-        entrances: List of entrance polylines
-        spaces: List of space polygons
-        walls: List of wall polylines
-        paths: List of path polylines
-        load: Boolean indicating whether to load previously saved selected spaces
-    """
-    pygame.init()
-    screen = pygame.display.set_mode((width, height), pygame.RESIZABLE)
-    pygame.display.set_caption("SVG Viewer")
-
-    # Initial colors and selection state
-    entrance_colors = [ENTRANCE_COLOR] * len(entrances)
-    space_colors = [SPACE_COLOR] * len(spaces)
-    wall_colors = [WALL_COLOR] * len(walls)
-    path_colors = [SPACE_COLOR] * len(paths)
-    selected_entrances = [False] * len(entrances)
-    selected_spaces = [False] * len(spaces)
-    selected_walls = [False] * len(walls)
-    selected_paths = [False] * len(paths)
-    midline_paths = []
-    midline_colors = []
-
-    # Load previously saved selected spaces
-    if load:
-        loaded_selected_spaces = load_selected_spaces("selected_spaces.json", selected_spaces, space_colors, SPACE_COLOR)
-        if loaded_selected_spaces is not None:
-            selected_spaces = loaded_selected_spaces
-
-    scale = 1.0
-    offset = [0, 0]
-    dragging = False
-    drag_start = (0, 0)
-
-    running = True
-    while running:
-        screen.fill((255, 255, 255))  # White background
-        mouse_pos = pygame.mouse.get_pos()
-
-        # Handle hover effect
-        transformed_mouse_pos = inverse_transform_point(mouse_pos, scale, offset)
-        handle_hover_and_click(transformed_mouse_pos, spaces, True, space_colors, selected_spaces, SPACE_COLOR)
-
-        # Transform shapes
-        transformed_spaces = transform_shapes(spaces, scale, offset)
-        transformed_walls = transform_shapes(walls, scale, offset)
-        transformed_entrances = transform_shapes(entrances, scale, offset)
-        transformed_midline_paths = transform_shapes(midline_paths, scale, offset)
-
-        # Draw everything
-        draw_shapes(screen, transformed_spaces, True, space_colors)
-        draw_shapes(screen, transformed_walls, False, wall_colors)
-        draw_shapes(screen, transformed_entrances, False, entrance_colors)
-        draw_shapes(screen, transformed_midline_paths, False, midline_colors)
-
-        pygame.display.flip()
-
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                running = False
-            elif event.type == pygame.MOUSEBUTTONDOWN:
-                if event.button == 4:  # Scroll up
-                    scale, offset = zoom_at(scale, offset, mouse_pos, 1.1)
-                elif event.button == 5:  # Scroll down
-                    scale, offset = zoom_at(scale, offset, mouse_pos, 1.0 / 1.1)
-                elif event.button == 2:  # Middle click
-                    dragging = True
-                    drag_start = event.pos
-                else:
-                    handle_click(transformed_mouse_pos, spaces, True, selected_spaces, space_colors, SPACE_COLOR)
-            elif event.type == pygame.MOUSEBUTTONUP:
-                if event.button == 2:  # Middle click
-                    dragging = False
-            elif event.type == pygame.MOUSEMOTION:
-                if dragging:
-                    dx, dy = event.rel
-                    offset[0] += dx
-                    offset[1] += dy
-            elif event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_m:  # Press 'm' to calculate midline paths
-                    midline_paths = handle_midline_path(selected_spaces, spaces, entrances, walls)
-                    midline_colors = [MIDLINE_COLOR] * len(midline_paths)
-                    print(f"Midline paths: {len(midline_paths)}")
-                elif event.key == pygame.K_a:  # Press 'a' to calculate all midline paths
-                    color_array, midline_paths = handle_all_midlines(spaces, entrances)
-                    midline_colors = color_array
-                    print(f"All midline paths: {len(midline_paths)}")
-                elif event.key == pygame.K_e:  # Press 'e' to export the SVG
-                    export_svg(OUTPUT_PATH, entrances, spaces, walls, midline_paths)
-                    print(f"SVG exported as '{OUTPUT_PATH}'")
-                elif event.key == pygame.K_r:  # Press 'r' to export the SVG with debug info
-                    export_svg(OUTPUT_PATH, entrances, spaces, walls, midline_paths, debug=True, midline_colors=midline_colors)
-                    print(f"SVG exported as '{OUTPUT_PATH}' with debug info")
-                elif event.key == pygame.K_s:  # Press 's' to save selected spaces
-                    save_selected_spaces("selected_spaces.json", selected_spaces)
-                elif event.key == pygame.K_l:  # Press 'l' to load selected spaces
-                    loaded_selected_spaces = load_selected_spaces("selected_spaces.json", selected_spaces, space_colors, SPACE_COLOR)
-                    if loaded_selected_spaces is not None:
-                        selected_spaces = loaded_selected_spaces
-            elif event.type == pygame.VIDEORESIZE:
-                width, height = event.size
-                screen = pygame.display.set_mode((width, height), pygame.RESIZABLE)
-
-    pygame.quit()
