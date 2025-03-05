@@ -1,0 +1,6 @@
+# Ignore input output folders to not release maps
+ver-*/
+output/
+
+# Ignore pycache
+__pycache__/
