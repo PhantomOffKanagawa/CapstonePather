@@ -101,8 +101,8 @@ The exported SVG will have the same structure with the following added or modifi
 
 ## Future Roadmap
 
-- ~~[X] Add support for stairs and elevators~~
-~~- [X] Connect multiple floors through vertical transportation element adjacency~~
+- [X] ~~Add support for stairs and elevators~~
+- [X] ~~Connect multiple floors through vertical transportation element adjacency~~
 - [ ] Add room name annotations
 - [ ] Improve path optimization and smoothing
 - [ ] Multi floor editing simultaneously
