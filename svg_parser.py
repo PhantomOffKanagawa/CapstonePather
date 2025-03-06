@@ -26,9 +26,11 @@ def parse_svg(file_path, screen_width=800, screen_height=600):
     spaces = extract_shapes(root, namespace, "spaces", "polygon")
     walls = extract_shapes(root, namespace, "walls", "polyline")
     paths = extract_shapes(root, namespace, "*", "path")
+    elevators = extract_shapes(root, namespace, "shapes", "polygon")
+    stairs = extract_shapes(root, namespace, "shapes", "polyline")
     
     # Normalize points
-    all_shapes = entrances + spaces + walls + paths
+    all_shapes = entrances + spaces + walls + paths + elevators + stairs
     max_x = max((p[0] for shape in all_shapes for p in shape), default=svg_width)
     max_y = max((p[1] for shape in all_shapes for p in shape), default=svg_height)
     
@@ -38,7 +40,9 @@ def parse_svg(file_path, screen_width=800, screen_height=600):
         [normalize(s, max_x, max_y, screen_width, screen_height) for s in entrances],
         [normalize(s, max_x, max_y, screen_width, screen_height) for s in spaces],
         [normalize(s, max_x, max_y, screen_width, screen_height) for s in walls],
-        [normalize(s, max_x, max_y, screen_width, screen_height) for s in paths]
+        [normalize(s, max_x, max_y, screen_width, screen_height) for s in paths],
+        [normalize(s, max_x, max_y, screen_width, screen_height) for s in elevators],
+        [normalize(s, max_x, max_y, screen_width, screen_height) for s in stairs]
     )
 
 def extract_shapes(root, namespace, group_id, tag):
@@ -165,13 +169,13 @@ def export_svg(file_path, entrances, spaces, walls, midlines, debug=False, midli
     def create_polyline(points, color):
         """Creates an SVG polyline element with the given points and color."""
         polyline = ET.Element('polyline', points=" ".join(f"{x},{y}" for x, y in points))
-        polyline.set('style', f"fill:none;stroke:rgb{color};stroke-width:2")
+        # polyline.set('style', f"fill:none;stroke:rgb{color};stroke-width:2")
         return polyline
 
     def create_polygon(points, color):
         """Creates an SVG polygon element with the given points and color."""
         polygon = ET.Element('polygon', points=" ".join(f"{x},{y}" for x, y in points))
-        polygon.set('style', f"fill:none;stroke:rgb{color};stroke-width:2")
+        # polygon.set('style', f"fill:none;stroke:rgb{color};stroke-width:2")
         return polygon
 
     # Create groups
@@ -181,7 +185,9 @@ def export_svg(file_path, entrances, spaces, walls, midlines, debug=False, midli
     midlines_group = ET.Element('g', id="midlines", style=f"fill:none;stroke:rgb{MIDLINE_COLOR};stroke-width:2")
     elevators_group = ET.Element('g', id="elevators", style=f"fill:rgb{ELEVATOR_COLOR};stroke:none")
     stairs_group = ET.Element('g', id="stairs", style=f"fill:rgb{STAIRS_COLOR};stroke:none")
-    debug_group = ET.Element('g', id="debug")
+    text_group = ET.Element('g', id="text", style="font-size:12px; fill:white;")
+    if debug:
+        debug_group = ET.Element('g', id="debug")
 
     # Add entrances
     for entrance in entrances:
@@ -216,14 +222,16 @@ def export_svg(file_path, entrances, spaces, walls, midlines, debug=False, midli
     # Add elevators if provided
     if elevators:
         for elevator in elevators:
-            export_drawing = elevator.export()
+            export_drawing, export_text = elevator.export()
             elevators_group.append(export_drawing)
+            text_group.append(export_text)
             
     # Add stairs if provided
     if stairs:
         for stairway in stairs:
-            export_drawing = stairway.export()
+            export_drawing, export_text = stairway.export()
             stairs_group.append(export_drawing)
+            text_group.append(export_text)
 
 
     # Append groups to SVG
@@ -233,6 +241,7 @@ def export_svg(file_path, entrances, spaces, walls, midlines, debug=False, midli
     svg.append(midlines_group)
     svg.append(elevators_group)
     svg.append(stairs_group)
+    svg.append(text_group)
     if debug:
         svg.append(debug_group)
 

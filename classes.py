@@ -44,7 +44,19 @@ class Elevator:
         attrs['data-id'] = str(self.id)
             
         circle = ET.Element('circle', **attrs)
-        return circle
+        
+        # Create text element for the ID
+        text_attrs = {
+            'x': str(cx),
+            'y': str(cy),
+            'text-anchor': 'middle',
+            'dy': '.3em',  # Adjust vertical alignment
+            'style': 'font-size:12px; fill: white;'
+        }
+        text = ET.Element('text', **text_attrs)
+        text.text = str(self.id)
+        
+        return (circle, text)
 
 
 class Stairs:
@@ -52,7 +64,7 @@ class Stairs:
         self.position = position  # (x, y) tuple
         self.id = stairs_id
         self.selected = False
-        self.radius = 15  # Radius for drawing
+        self.radius = 8  # Radius for drawing
     
     def is_clicked(self, point, scale, offset):
         # Check if a point is within the stairs' area (assuming a rectangular area)
@@ -60,12 +72,12 @@ class Stairs:
         x2, y2 = point
         x1, y1 = transform_point((x1, y1), scale, offset)
         distance = ((x1 - x2) ** 2 + (y1 - y2) ** 2) ** 0.5
-        return distance <= self.radius * scale
+        return distance <= self.radius * 2 * scale
 
     def draw(self, screen, scale, offset):
-        # Draw elevator circle
+        # Draw stairs rectangle
         x, y = transform_point(self.position, scale, offset)
-        width, height = self.radius * scale, self.radius * scale
+        width, height = self.radius * 2 * scale, self.radius * 2 * scale
         color = STAIRS_SELECTED_COLOR if self.selected else STAIRS_COLOR
         pygame.draw.rect(screen, color, (int(x - width / 2), int(y - height / 2), int(width), int(height)))
         
@@ -76,17 +88,28 @@ class Stairs:
         screen.blit(text, text_rect)
 
     def export(self):
-        """Creates an SVG rectangle element at the specified position with the given width, height, and color."""
-        x, y = self.position
-        width, height = self.radius, self.radius
+        """Creates an SVG circle element at the specified position with the given width, height, and color."""
+        cx, cy = self.position
         attrs = {
-            'x': str(x - width / 2),
-            'y': str(y - height / 2),
-            'width': str(width),
-            'height': str(height),
+            'cx': str(cx),
+            'cy': str(cy),
+            'r': str(self.radius),
             'adjacency': str(self.id)
         }
+        
         attrs['data-id'] = str(self.id)
-
-        rectangle = ET.Element('rect', **attrs)
-        return rectangle
+            
+        circle = ET.Element('circle', **attrs)
+        
+        # Create text element for the ID
+        text_attrs = {
+            'x': str(cx),
+            'y': str(cy),
+            'text-anchor': 'middle',
+            'dy': '.3em',  # Adjust vertical alignment
+            'style': 'font-size:12px; fill: white;'
+        }
+        text = ET.Element('text', **text_attrs)
+        text.text = str(self.id)
+        
+        return (circle, text)

@@ -13,11 +13,12 @@ from shapely.geometry import LineString, MultiLineString
 from shapely.ops import linemerge
 
 # Initialize pygame only once
-def init_pygame():
-    pygame.init()
+# def init_pygame():
+    # pygame.init()
 
 class MapWindow:
-    def __init__(self, file_path, map_name, width, height, entrances, spaces, walls, paths, elevators, stairs, on_close):
+    def __init__(self, file_path, map_name, width, height, entrances, spaces, walls, paths, circles, squares, on_close):    
+        pygame.init()
         self.file_path = file_path
         self.map_name = map_name
         self.width = width
@@ -26,8 +27,10 @@ class MapWindow:
         self.spaces = spaces
         self.walls = walls
         self.paths = paths
-        self.elevators = elevators or []  # List of Elevator objects
-        self.stairs = stairs or []  # List of Elevator objects
+        self.circles = circles
+        self.squares = squares
+        self.elevators = []  # List of Elevator objects
+        self.stairs = []  # List of Stairs objects
         self.on_close = on_close
         
         # Create a new pygame window
@@ -39,6 +42,8 @@ class MapWindow:
         self.space_colors = [SPACE_COLOR] * len(spaces)
         self.wall_colors = [WALL_COLOR] * len(walls)
         self.path_colors = [SPACE_COLOR] * len(paths)
+        self.circle_colors = [SHAPE_COLOR] * len(circles)
+        self.square_colors = [SHAPE_COLOR] * len(squares)
         self.selected_entrances = [False] * len(entrances)
         self.selected_spaces = [False] * len(spaces)
         self.selected_walls = [False] * len(walls)
@@ -61,7 +66,7 @@ class MapWindow:
         self.current_stairs_id = 1
         
         # Load saved spaces if they exist
-        self.load_selected_spaces()
+        self.load_settings()
         
         # Start the rendering loop
         self.running = True
@@ -76,8 +81,11 @@ class MapWindow:
             pygame.display.flip()
             clock.tick(60)
         
+        pygame.quit()
+
         # Notify the main application when this window closes
         self.on_close(self)
+        
     
     def handle_events(self):
         """Handle pygame events for this window"""
@@ -91,6 +99,9 @@ class MapWindow:
         
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
+                self.close()
+
+            if event.type == pygame.K_ESCAPE:
                 self.close()
             
             elif event.type == pygame.MOUSEBUTTONDOWN:
@@ -154,7 +165,8 @@ class MapWindow:
                     print(f"Midline paths: {len(self.midline_paths)}")
                 
                 elif event.key == KEY_ALL_MIDLINES:  # Calculate all midline paths
-                    color_array, self.midline_paths = handle_all_midlines(self.spaces, self.entrances)
+                    color_array, self.midline_paths = handle_all_midlines(self.spaces, self.entrances, 
+                                                                         self.elevators, self.stairs)
                     self.midline_colors = color_array
                     print(f"All midline paths: {len(self.midline_paths)}")
                 
@@ -172,10 +184,10 @@ class MapWindow:
                     print(f"SVG exported as '{output_path}' with debug info")
                 
                 elif event.key == KEY_SAVE:  # Save selected spaces
-                    self.save_selected_spaces()
+                    self.save_settings()
                 
                 elif event.key == KEY_LOAD:  # Load selected spaces
-                    self.load_selected_spaces()
+                    self.load_settings()
                 
                 elif event.key == KEY_ELEVATOR_MODE:  # Toggle elevator mode
                     if not self.stairs_mode:
@@ -228,7 +240,6 @@ class MapWindow:
         """Properly close the window and notify the main application"""
         print(f"Closing window: {self.map_name}")
         self.running = False
-        # We don't call pygame.quit() here since there might be other windows open
     
     def draw(self):
         """Draw all elements to the screen"""
@@ -239,13 +250,17 @@ class MapWindow:
         transformed_walls = transform_shapes(self.walls, self.scale, self.offset)
         transformed_entrances = transform_shapes(self.entrances, self.scale, self.offset)
         transformed_midline_paths = transform_shapes(self.midline_paths, self.scale, self.offset)
+        transformed_circles = transform_shapes(self.circles, self.scale, self.offset)
+        transformed_squares = transform_shapes(self.squares, self.scale, self.offset)
         
         # Draw shapes
         draw_shapes(self.window_id, transformed_spaces, True, self.space_colors)
         draw_shapes(self.window_id, transformed_walls, False, self.wall_colors)
         draw_shapes(self.window_id, transformed_entrances, False, self.entrance_colors)
-        draw_shapes(self.window_id, transformed_midline_paths, False, self.midline_colors)
-        
+        draw_shapes(self.window_id, transformed_midline_paths, False, self.midline_colors)        
+        draw_shapes(self.window_id, transformed_circles, False, self.circle_colors)
+        draw_shapes(self.window_id, transformed_squares, False, self.square_colors)
+
         # Draw elevators
         for elevator in self.elevators:
             elevator.draw(self.window_id, self.scale, self.offset)
@@ -263,45 +278,25 @@ class MapWindow:
             font = pygame.font.SysFont('Arial', 20)
             text = font.render(f"Stairs Mode (ID: {self.current_stairs_id})", True, STAIRS_COLOR)
             self.window_id.blit(text, (10, 10))
-        
-        # Draw close button
-        close_btn_rect = pygame.Rect(self.width - 30, 10, 20, 20)
-        pygame.draw.rect(self.window_id, (255, 0, 0), close_btn_rect)  # Red close button
-        pygame.draw.line(self.window_id, (255, 255, 255), (self.width - 25, 15), (self.width - 15, 25), 2)
-        pygame.draw.line(self.window_id, (255, 255, 255), (self.width - 15, 15), (self.width - 25, 25), 2)
-        
-        # Check if mouse is over the close button
-        mouse_pos = pygame.mouse.get_pos()
-        if close_btn_rect.collidepoint(mouse_pos):
-            for event in pygame.event.get(pygame.MOUSEBUTTONDOWN):
-                if event.button == 1:  # Left click
-                    self.close()
     
-    def save_selected_spaces(self):
-        """Save selected spaces and elevators to a JSON file"""
-        file_path = f"./output/{self.map_name}_spaces.json"
+    def save_settings(self):
+        """Save selected elevators to a JSON file"""
+        file_path = f"./output/{self.map_name}_settings.json"
         with open(file_path, 'w') as file:
             json.dump({
-                "selected_spaces": self.selected_spaces,
                 "elevators": [{"position": e.position, "id": e.id, "selected": e.selected} 
-                             for e in self.elevators]
+                             for e in self.elevators],
+                "stairs": [{"position": s.position, "id": s.id, "selected": s.selected} 
+                             for s in self.stairs],
             }, file)
-        print(f"Selected spaces and elevators saved to {file_path}")
+        print(f"Selected elevators saved to {file_path}")
     
-    def load_selected_spaces(self):
-        """Load selected spaces and elevators from a JSON file"""
-        file_path = f"./output/{self.map_name}_spaces.json"
+    def load_settings(self):
+        """Load selected elevators from a JSON file"""
+        file_path = f"./output/{self.map_name}_settings.json"
         try:
             with open(file_path, 'r') as file:
                 data = json.load(file)
-                
-                # Load selected spaces
-                loaded_selected_spaces = data.get("selected_spaces", [])
-                if loaded_selected_spaces:
-                    for i, selected in enumerate(loaded_selected_spaces):
-                        if i < len(self.selected_spaces):
-                            self.selected_spaces[i] = selected
-                            self.space_colors[i] = CLICKED_COLOR if selected else SPACE_COLOR
                 
                 # Load elevators
                 loaded_elevators = data.get("elevators", [])
@@ -315,7 +310,19 @@ class MapWindow:
                         elevator.selected = e_data.get("selected", False)
                         self.elevators.append(elevator)
                 
-                print(f"Selected spaces and elevators loaded from {file_path}")
+                # Load stairs
+                loaded_stairs = data.get("stairs", [])
+                if loaded_stairs:
+                    self.stairs = []
+                    for e_data in loaded_stairs:
+                        staircase = Stairs(
+                            position=tuple(e_data["position"]), 
+                            stairs_id=e_data.get("id", 1)
+                        )
+                        staircase.selected = e_data.get("selected", False)
+                        self.stairs.append(staircase)
+                
+                print(f"Selected elevators loaded from {file_path}")
         except FileNotFoundError:
             print(f"No saved file found at {file_path}")
 
@@ -367,7 +374,7 @@ def handle_click(mouse_pos, shapes, is_polygon, selected, shape_colors, base_col
                 selected[i] = not selected[i]
                 shape_colors[i] = CLICKED_COLOR if selected[i] else base_color
 
-def handle_midline_path(selected_spaces, spaces, entrances, walls):
+def handle_midline_path(selected_spaces, spaces, entrances, walls, elevators, stairs):
     """
     Calculates midline paths for selected spaces and connects entrances to these paths.
     """
@@ -390,14 +397,26 @@ def handle_midline_path(selected_spaces, spaces, entrances, walls):
                 if is_point_inside_polygon(midpoint, spaces[i], tolerance=5):
                     nearest_point = nearest_point_on_line(midpoint, midline_path)
                     midline_paths.append([tuple(midpoint), tuple(nearest_point)])
+
+            # Add paths from elevators to the nearest point on the midline
+            for elevator in elevators:
+                if is_point_inside_polygon(elevator.position, spaces[i], tolerance=5):
+                    nearest_point = nearest_point_on_line(elevator.position, midline_path)
+                    midline_paths.append([tuple(elevator.position), tuple(nearest_point)])
+
+            # Add paths from stairs to the nearest point on the midline
+            for stair in stairs:
+                if is_point_inside_polygon(stair.position, spaces[i], tolerance=5):
+                    nearest_point = nearest_point_on_line(stair.position, midline_path)
+                    midline_paths.append([tuple(stair.position), tuple(nearest_point)])
     
     return midline_paths
 
-def handle_all_midlines(spaces, entrances):
+def handle_all_midlines(spaces, entrances, elevators=None, stairs=None):
     """
     Calculates midline paths for all spaces and connects them.
     """
-    midline_paths = handle_midline_path([True] * len(spaces), spaces, entrances, [])
+    midline_paths = handle_midline_path([True] * len(spaces), spaces, entrances, [], elevators, stairs)
     paths = midline_paths.copy()
 
     # Merge all midlines that share coordinates

@@ -77,8 +77,20 @@ python main.py
 
 The input SVG should have the following structure:
 - `<g id="spaces">`: Group containing space/room polygons
-- `<g id="entrances">`: Group containing entrance/door polylines
 - `<g id="walls">`: Group containing wall polylines
+- `<g id="entrances">`: Group containing entrance/door polylines
+- `<g id="shapes">`: (Optional) Group with shapes for stairs and elevators
+- `<g id="windows">`: (Optional) Group with polylines for windows, unused here
+
+## SVG Export Parameters
+
+The exported SVG will have the same structure with the following added or modified groups:
+- `<g id="midlines">`: Group with polylines representing midline path
+- `<g id="elevators">`: Group with circles representing elevators, adjacency attribute shows floor global connections
+- `<g id="stairs">`: Group with circles representing stairs, adjacency attribute shows floor global connections
+- `<g id="text">`: Group with text for elevator/stairs IDs for readability
+~~- `<g id="shapes">`: Removed~~
+~~- `<g id="windows">`: Removed~~
 
 ## Examples
 
@@ -89,11 +101,12 @@ The input SVG should have the following structure:
 
 ## Future Roadmap
 
-- [ ] Add support for stairs and elevators
+- ~~[X] Add support for stairs and elevators~~
+~~- [X] Connect multiple floors through vertical transportation element adjacency~~
 - [ ] Add room name annotations
 - [ ] Improve path optimization and smoothing
-- [ ] Connect multiple floors through vertical transportation elements
 - [ ] Multi floor editing simultaneously
+- [ ] Refactor an Cleanup
 
 ## Project Structure
 

@@ -11,6 +11,7 @@ ELEVATOR_COLOR = (255, 0, 255)  # Magenta
 ELEVATOR_SELECTED_COLOR = (255, 150, 255)  # Light Magenta
 STAIRS_COLOR = (200, 200, 0)  # Yellow
 STAIRS_SELECTED_COLOR = (255, 255, 0)  # Light Yellow
+SHAPE_COLOR = (0, 0, 0)  # Black
 
 # Path Constants
 INPUT_PATH = "./ver-0.0.4-svgs/three.svg"  # Replace with your SVG file path
