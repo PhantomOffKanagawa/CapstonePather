@@ -4,7 +4,7 @@ import itertools
 
 def parse_svg(file_path, screen_width=800, screen_height=600):
     """
-    Extracts polylines under 'entrances' and 'walls', polygons under 'spaces', and paths.
+    Extracts polylines under 'entrances' and 'walls', polygons under 'spaces', paths, and elevators.
     
     Parameters:
         file_path: Path to the SVG file
@@ -12,7 +12,7 @@ def parse_svg(file_path, screen_width=800, screen_height=600):
         screen_height: Height of the display window
         
     Returns:
-        Tuple containing (screen_width, screen_height, entrances, spaces, walls, paths)
+        Tuple containing (screen_width, screen_height, entrances, spaces, walls, paths, elevators)
     """
     tree = ET.parse(file_path)
     root = tree.getroot()
@@ -26,13 +26,24 @@ def parse_svg(file_path, screen_width=800, screen_height=600):
     spaces = extract_shapes(root, namespace, "spaces", "polygon")
     walls = extract_shapes(root, namespace, "walls", "polyline")
     paths = extract_shapes(root, namespace, "*", "path")
-
+    elevators = extract_shapes(root, namespace, "shapes", "polygon")
+    stairs = extract_shapes(root, namespace, "shapes", "polyline")
+    
     # Normalize points
-    all_shapes = entrances + spaces + walls + paths
+    all_shapes = entrances + spaces + walls + paths + elevators + stairs
     max_x = max((p[0] for shape in all_shapes for p in shape), default=svg_width)
     max_y = max((p[1] for shape in all_shapes for p in shape), default=svg_height)
-
-    return screen_width, screen_height, [normalize(s, max_x, max_y, screen_width, screen_height) for s in entrances], [normalize(s, max_x, max_y, screen_width, screen_height) for s in spaces], [normalize(s, max_x, max_y, screen_width, screen_height) for s in walls], [normalize(s, max_x, max_y, screen_width, screen_height) for s in paths]
+    
+    return (
+        screen_width, 
+        screen_height, 
+        [normalize(s, max_x, max_y, screen_width, screen_height) for s in entrances],
+        [normalize(s, max_x, max_y, screen_width, screen_height) for s in spaces],
+        [normalize(s, max_x, max_y, screen_width, screen_height) for s in walls],
+        [normalize(s, max_x, max_y, screen_width, screen_height) for s in paths],
+        [normalize(s, max_x, max_y, screen_width, screen_height) for s in elevators],
+        [normalize(s, max_x, max_y, screen_width, screen_height) for s in stairs]
+    )
 
 def extract_shapes(root, namespace, group_id, tag):
     """
@@ -83,7 +94,7 @@ def parse_path(d_attr, shapes):
     start_pos = (0, 0)
     for (n, command) in enumerate(path_commands):
         cmd_type = command[0]
-        cmd_values = list(map(float, re.findall(r'-?\d+\.?\d*', command[1:])))
+        cmd_values = list(map(float, re.findall(r'-?\d+\.?\d*', command[1:])) )
         if cmd_type in 'Mm':
             if (len(points) != 0):
                 shapes.append(points)
@@ -139,7 +150,7 @@ def normalize(shape, max_x, max_y, screen_width, screen_height):
     """
     return [(int(x / max_x * screen_width), int(y / max_y * screen_height)) for x, y in shape]
 
-def export_svg(file_path, entrances, spaces, walls, midlines, debug=False, midline_colors=None):
+def export_svg(file_path, entrances, spaces, walls, midlines, debug=False, midline_colors=None, elevators=None, stairs=None):
     """
     Exports shapes to an SVG file.
     
@@ -151,33 +162,32 @@ def export_svg(file_path, entrances, spaces, walls, midlines, debug=False, midli
         midlines: List of midline paths
         debug: Whether to include debug information (default: False)
         midline_colors: Colors for midlines if in debug mode (default: None)
+        elevators: List of Elevator objects (default: None)
     """
     svg = ET.Element('svg', xmlns="http://www.w3.org/2000/svg", width="800", height="600")
     
     def create_polyline(points, color):
         """Creates an SVG polyline element with the given points and color."""
         polyline = ET.Element('polyline', points=" ".join(f"{x},{y}" for x, y in points))
-        polyline.set('style', f"fill:none;stroke:rgb{color};stroke-width:2")
+        # polyline.set('style', f"fill:none;stroke:rgb{color};stroke-width:2")
         return polyline
 
     def create_polygon(points, color):
         """Creates an SVG polygon element with the given points and color."""
         polygon = ET.Element('polygon', points=" ".join(f"{x},{y}" for x, y in points))
-        polygon.set('style', f"fill:none;stroke:rgb{color};stroke-width:2")
+        # polygon.set('style', f"fill:none;stroke:rgb{color};stroke-width:2")
         return polygon
-
-    def create_circle(cx, cy, radius, color):
-        """Creates an SVG circle element at the specified position with the given radius and color."""
-        circle = ET.Element('circle', cx=str(cx), cy=str(cy), r=str(radius))
-        circle.set('style', f"fill:rgb{color};stroke:none")
-        return circle
 
     # Create groups
     entrances_group = ET.Element('g', id="entrances", style=f"fill:none;stroke:rgb{ENTRANCE_COLOR};stroke-width:2")
     spaces_group = ET.Element('g', id="spaces", style=f"fill:none;stroke:rgb{SPACE_COLOR};stroke-width:2")
     walls_group = ET.Element('g', id="walls", style=f"fill:none;stroke:rgb{WALL_COLOR};stroke-width:2")
     midlines_group = ET.Element('g', id="midlines", style=f"fill:none;stroke:rgb{MIDLINE_COLOR};stroke-width:2")
-    debug_group = ET.Element('g', id="debug")
+    elevators_group = ET.Element('g', id="elevators", style=f"fill:rgb{ELEVATOR_COLOR};stroke:none")
+    stairs_group = ET.Element('g', id="stairs", style=f"fill:rgb{STAIRS_COLOR};stroke:none")
+    text_group = ET.Element('g', id="text", style="font-size:12px; fill:white;")
+    if debug:
+        debug_group = ET.Element('g', id="debug")
 
     # Add entrances
     for entrance in entrances:
@@ -208,12 +218,30 @@ def export_svg(file_path, entrances, spaces, walls, midlines, debug=False, midli
     else:
         for midline in midlines:
             midlines_group.append(create_polyline(midline, MIDLINE_COLOR))
+    
+    # Add elevators if provided
+    if elevators:
+        for elevator in elevators:
+            export_drawing, export_text = elevator.export()
+            elevators_group.append(export_drawing)
+            text_group.append(export_text)
+            
+    # Add stairs if provided
+    if stairs:
+        for stairway in stairs:
+            export_drawing, export_text = stairway.export()
+            stairs_group.append(export_drawing)
+            text_group.append(export_text)
+
 
     # Append groups to SVG
     svg.append(spaces_group)
     svg.append(walls_group)
     svg.append(entrances_group)
     svg.append(midlines_group)
+    svg.append(elevators_group)
+    svg.append(stairs_group)
+    svg.append(text_group)
     if debug:
         svg.append(debug_group)
 

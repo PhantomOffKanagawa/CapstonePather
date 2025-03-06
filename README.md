@@ -29,6 +29,7 @@ This tool was rapidly prototyped alongside GitHub copilot in VS Code. Most PyGam
   - numpy
   - shapely
   - pygeoops
+  - tkinter
 
 ## Installation
 
@@ -36,7 +37,7 @@ This tool was rapidly prototyped alongside GitHub copilot in VS Code. Most PyGam
 2. Install the required dependencies:
 
 ```bash
-pip install pygame numpy shapely pygeoops
+pip install pygame numpy shapely pygeoops tkinter
 ```
 
 ## Usage
@@ -66,13 +67,30 @@ python main.py
   - `l`: Load selected spaces
   - `e`: Export SVG
   - `r`: Export SVG with debug information
+  - `v`: Activate "Elevator Mode"
+  - `c`: Activate "Stairs Mode"
+  - `up arrow`: Increase ID
+  - `down arrow`: Decrease ID
+  - `delete`: Delete selected Elevator or Stairs
 
 ## SVG Format Requirements
 
 The input SVG should have the following structure:
 - `<g id="spaces">`: Group containing space/room polygons
-- `<g id="entrances">`: Group containing entrance/door polylines
 - `<g id="walls">`: Group containing wall polylines
+- `<g id="entrances">`: Group containing entrance/door polylines
+- `<g id="shapes">`: (Optional) Group with shapes for stairs and elevators
+- `<g id="windows">`: (Optional) Group with polylines for windows, unused here
+
+## SVG Export Parameters
+
+The exported SVG will have the same structure with the following added or modified groups:
+- `<g id="midlines">`: Group with polylines representing midline path
+- `<g id="elevators">`: Group with circles representing elevators, adjacency attribute shows floor global connections
+- `<g id="stairs">`: Group with circles representing stairs, adjacency attribute shows floor global connections
+- `<g id="text">`: Group with text for elevator/stairs IDs for readability
+~~- `<g id="shapes">`: Removed~~
+~~- `<g id="windows">`: Removed~~
 
 ## Examples
 
@@ -83,11 +101,12 @@ The input SVG should have the following structure:
 
 ## Future Roadmap
 
-- [ ] Add support for stairs and elevators
+- ~~[X] Add support for stairs and elevators~~
+~~- [X] Connect multiple floors through vertical transportation element adjacency~~
 - [ ] Add room name annotations
 - [ ] Improve path optimization and smoothing
-- [ ] Connect multiple floors through vertical transportation elements
 - [ ] Multi floor editing simultaneously
+- [ ] Refactor an Cleanup
 
 ## Project Structure
 
@@ -96,6 +115,7 @@ The input SVG should have the following structure:
 - `svg_parser.py`: SVG parsing and export functions
 - `display.py`: Interactive display and UI logic
 - `geometry_utils.py`: Geometric calculations and transformations
+- `classes.py`: Holds data for classes like elevator
 
 ## License
 
